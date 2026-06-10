@@ -1,0 +1,5 @@
+.env
+bin/
+data/*.db
+data/store.yml
+data/*.tmp

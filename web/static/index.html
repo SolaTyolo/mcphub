@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mcphub Chat Test</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>mcphub</h1>
+      <p>Private MCP Gateway — Agent Chat Test</p>
+    </header>
+
+    <section class="config">
+      <label>API Key (optional if GATEWAY_API_KEY unset)<input id="apiKey" type="password" placeholder="gateway api key" /></label>
+      <label>Agent
+        <select id="agentSelect">
+          <option value="">Loading agents…</option>
+        </select>
+        <button type="button" id="reloadAgents">Reload</button>
+      </label>
+    </section>
+
+    <section class="chat">
+      <div id="messages" class="messages"></div>
+      <form id="chatForm">
+        <textarea id="userInput" rows="3" placeholder="Ask something that may use MCP tools…"></textarea>
+        <div class="input-row">
+          <label class="file-label">Voice<input id="audioInput" type="file" accept="audio/*" /></label>
+          <label class="file-label">Image<input id="imageInput" type="file" accept="image/*" /></label>
+          <button type="submit">Send</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="meta">
+      <div id="providerInfo"></div>
+      <div id="transcriptionInfo"></div>
+      <details>
+        <summary>Tool Calls</summary>
+        <pre id="toolCalls"></pre>
+      </details>
+    </section>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
