@@ -22,6 +22,19 @@ services:
     volumes:
       - ollama_data:/root/.ollama
 
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    ports:
+      - "8000:8000"
+    environment:
+      WHISPER__MODEL: base
+
+  markitdown:
+    image: mcp/markitdown
+    command: ["--http", "--host", "0.0.0.0", "--port", "3001"]
+    ports:
+      - "3001:3001"
+
   mcphub:
     build:
       context: ..
@@ -32,6 +45,7 @@ services:
       LLM_STORE_DSN: postgres://llm:llm@postgres:5432/llm?sslmode=disable
       LLM_BASE_URL: http://ollama:11434/v1
       WHISPER_BASE_URL: http://whisper:8000/v1
+      MARKITDOWN_MCP_URL: http://markitdown:3001/mcp
     ports:
       - "8090:8090"
     depends_on:
@@ -41,14 +55,22 @@ services:
         condition: service_started
       whisper:
         condition: service_started
+      markitdown:
+        condition: service_started
 
-  whisper:
-    image: fedirz/faster-whisper-server:latest-cpu
+  rustfs:
+    image: rustfs/rustfs:latest
     ports:
-      - "8000:8000"
+      - "9000:9000"
+      - "9001:9001"
     environment:
-      WHISPER__MODEL: base
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+    volumes:
+      - rustfs_data:/data
+    command: ["/data"]
 
 volumes:
   pg_data:
   ollama_data:
+  rustfs_data:

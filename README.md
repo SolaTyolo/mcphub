@@ -9,7 +9,7 @@ Module: [`github.com/SolaTyolo/mcphub`](https://github.com/SolaTyolo/mcphub)
 ## Features
 
 - Agent-centric configuration (system prompt, JSON Schema / response description, MCP server bindings)
-- Postgres-backed Agent and MCP server configuration
+- Pluggable storage (YAML file / SQLite / Postgres)
 - Official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) client (`stdio`, `http` transports)
 - HTTP MCP uses [SolaTyolo/httpclient](https://github.com/SolaTyolo/httpclient) (retryable HTTP)
 - Chat-completions compatible LLM client — works with Ollama, DeepSeek, OpenAI, etc.
@@ -17,21 +17,26 @@ Module: [`github.com/SolaTyolo/mcphub`](https://github.com/SolaTyolo/mcphub)
 - REST API + embedded static chat test page
 - Docker Compose (Postgres + Ollama + Whisper + mcphub)
 
-## Quick start
+## Quick start (file store, no database)
 
 ```bash
 cp .env.example .env
-make infra-up
-make migrate
-make ollama-pull
-make dev         # http://localhost:8090
-make seed        # creates filesystem MCP + fs-agent
+# .env defaults to LLM_STORE_DSN=file://./data/store.yml
+cp data/store.example.yml data/store.yml
+
+make infra-up          # Ollama + Whisper (optional, for local LLM / voice)
+make ollama-pull-local
+make dev-file          # http://localhost:8090
+make seed              # filesystem MCP + text/vision agents
 ```
 
-Or run everything in Docker:
+agents and MCP servers live in `./data/store.yml` (editable by hand).
+
+### Docker Compose (Postgres production)
 
 ```bash
 cp .env.example .env
+# set LLM_STORE_DSN=postgres://llm:llm@localhost:5433/llm?sslmode=disable
 make up
 make migrate
 make seed
@@ -43,9 +48,9 @@ Configure a single `LLM_STORE_DSN` using `scheme://path`. Backend type is inferr
 
 | DSN example | Backend | Use case |
 |-------------|---------|----------|
-| `postgres://user:pass@host/db?sslmode=disable` | Postgres | Production / Docker Compose |
+| `file://./data/store.yml` | YAML file | **Local quick start**, zero deps, edit by hand / GitOps |
 | `sqlite://./data/llm.db` or `file:./data/llm.db` | SQLite | Local single-file DB, no Postgres |
-| `file://./data/store.yml` | YAML file | Zero deps, edit by hand / GitOps |
+| `postgres://user:pass@host/db?sslmode=disable` | Postgres | Production / Docker Compose |
 
 If unset, defaults to `file://./data/store.yml`. Legacy env `LLM_DB_DSN` is accepted as a fallback; `LLM_DATA_FILE` is mapped to `file://…` when `LLM_STORE_DSN` is empty.
 
@@ -77,8 +82,8 @@ WHISPER_BASE_URL=http://localhost:8000/v1
 
 ```bash
 make infra-up
-make ollama-pull-local   # pulls text + vision models
-make migrate && make dev && make seed
+make ollama-pull-local
+make dev-file && make seed
 ```
 
 ### Production (compatible API)
@@ -114,11 +119,35 @@ Multipart chat (`POST /api/agents/{id}/chat`):
 
 | Field | Description |
 |-------|-------------|
-| `audio` | Voice file → Whisper STT |
-| `image` | Image file → base64 data URL |
-| `text` | Optional prompt (with image) |
+| `audio` | Voice file → Whisper STT (**eager**) |
+| `image` | Image file → base64 data URL (**eager**, vision model) |
+| `document` / `file` | Office file → stored as attachment (**lazy**, AI parses via builtin tool) |
+| `text` | Optional prompt |
+| `attachmentIds` | JSON array of pre-uploaded attachment IDs |
 | `messages` | Optional JSON history |
 | `model` | Optional per-request model override |
+
+Upload attachments separately via `POST /api/attachments` (multipart `file` field).
+
+**Hybrid ingress:** audio and images are preprocessed immediately; documents are stored in the attachment backend and parsed on demand by builtin tools `mcphub__list_attachments` and `mcphub__parse_document` when `MARKITDOWN_MCP_URL` is set ([MarkItDown MCP](https://github.com/microsoft/markitdown/tree/main/packages/markitdown-mcp): Office, PDF, CSV, JSON, images, audio, and more).
+
+### Document parsing (MarkItDown)
+
+Set `MARKITDOWN_MCP_URL` (e.g. `http://localhost:3001/mcp`). Docker Compose includes the official [`mcp/markitdown`](https://hub.docker.com/r/mcp/markitdown) sidecar (Streamable HTTP).
+
+- mcphub calls MarkItDown internally via MCP; agents still use `mcphub__parse_document(attachment_id)` — no URI handling in prompts
+- Leave `MARKITDOWN_MCP_URL` empty to disable document parsing tools
+
+### Attachment store
+
+Configure `ATTACHMENT_STORE_DSN`:
+
+| DSN | Backend |
+|-----|---------|
+| `file://./data/attachments` | Local directory (default) |
+| `s3://key:secret@host:9000/bucket/prefix?path_style=true` | S3-compatible (RustFS / MinIO) |
+
+Dev RustFS: `docker compose -f deploy/docker-compose.yml up -d rustfs`
 
 ## Speech-to-text (Whisper)
 
@@ -137,13 +166,14 @@ Set `WHISPER_BASE_URL` (e.g. `http://localhost:8000/v1`). Docker Compose include
 | GET | `/api/agents/{id}` | Get agent |
 | PUT | `/api/agents/{id}` | Update agent |
 | DELETE | `/api/agents/{id}` | Delete agent |
-| POST | `/api/agents/{id}/chat` | Chat (JSON or multipart audio) |
+| POST | `/api/agents/{id}/chat` | Chat (JSON or multipart: audio / image / document) |
 | POST | `/api/mcp-servers` | Add MCP server |
 | GET | `/api/mcp-servers` | List MCP servers |
 | PUT | `/api/mcp-servers/{serverId}` | Update MCP server |
 | DELETE | `/api/mcp-servers/{serverId}` | Delete MCP server |
 | POST | `/api/mcp-servers/{serverId}/test` | Test connection + list tools |
 | POST | `/api/transcribe` | Transcribe audio file |
+| POST | `/api/attachments` | Upload attachment (returns id) |
 
 Protected routes require `X-API-Key` when `GATEWAY_API_KEY` is set.
 
@@ -177,18 +207,26 @@ See [`.env.example`](.env.example):
 
 - `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_VISION_MODEL`
 - `LLM_STORE_DSN` (storage: `postgres://`, `sqlite://`, `file://`)
+- `ATTACHMENT_STORE_DSN` (attachments: `file://`, `s3://`)
 - `GATEWAY_API_KEY` (optional)
-- `WHISPER_BASE_URL`, `WHISPER_API_KEY`, `WHISPER_MODEL`
+- `WHISPER_BASE_URL`, `WHISPER_API_KEY`, `WHISPER_MODEL` (STT enabled when `WHISPER_BASE_URL` is set)
+- `MARKITDOWN_MCP_URL` (document parsing enabled when set; e.g. `http://localhost:3001/mcp`)
 - `LLM_SERVER_ADDR`
 - `MCP_IDLE_TTL`, `AGENT_MAX_ROUNDS`, `MCP_FS_ROOT`
 
 ## Database migrations
 
+Only **Postgres / SQLite** need migrations; file store skips them.
+
 ```bash
-make migrate
+# Postgres (Docker Compose)
+LLM_STORE_DSN=postgres://llm:llm@localhost:5433/llm?sslmode=disable make migrate
+
+# SQLite
+LLM_STORE_DSN=sqlite://./data/llm.db make migrate
 ```
 
-Migrations: `001_init.sql` (legacy tenant schema) → `002_agent_refactor.sql` (agents, drop tenants).
+Migration files: `migrations/postgres/001_init.sql`, `migrations/sqlite/001_init.sql`.
 
 ## MCP tool naming
 
@@ -200,3 +238,4 @@ Tools from multiple servers are prefixed as `{server_name}__{tool_name}`.
 - Supports `stdio` and `http` (Streamable HTTP) MCP transports.
 - HTTP MCP uses [github.com/SolaTyolo/httpclient](https://github.com/SolaTyolo/httpclient) with retries.
 - MCP sessions idle out after `MCP_IDLE_TTL`; config changes invalidate cached sessions.
+- **Mac / Windows local:** If you only need a local OpenAI-compatible API and don't require MCP Agent orchestration, consider [LocalAI](https://github.com/mudler/LocalAI) as a lighter alternative to this project. To keep using mcphub without Docker Ollama, point `LLM_BASE_URL` at LocalAI (e.g. `http://localhost:8080/v1`).

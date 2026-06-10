@@ -117,6 +117,15 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if len(req.AttachmentIDs) > 0 {
+		resolved, err := s.resolveAttachmentIDs(r, req.AttachmentIDs)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		req.Attachments = mergeAttachments(req.Attachments, resolved...)
+	}
+
 	if len(req.Messages) == 0 {
 		writeError(w, http.StatusBadRequest, errors.New("messages required"))
 		return
@@ -136,8 +145,8 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.Transcription = transcription
-	logx.Info(httpTag, "chat ok agent=%s endpoint=%s model=%s tool_calls=%d transcribed=%t",
-		agentID, resp.Endpoint, resp.Model, len(resp.ToolCalls), transcription != "")
+	logx.Info(httpTag, "chat ok agent=%s endpoint=%s model=%s tool_calls=%d transcribed=%t attachments=%d",
+		agentID, resp.Endpoint, resp.Model, len(resp.ToolCalls), transcription != "", len(resp.Attachments))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -157,8 +166,19 @@ func (s *Server) parseMultipartChat(r *http.Request) (models.ChatRequest, string
 		req.Model = model
 	}
 
+	if ids, err := decodeAttachmentIDs(r.FormValue("attachmentIds")); err != nil {
+		return models.ChatRequest{}, "", err
+	} else if len(ids) > 0 {
+		resolved, err := s.resolveAttachmentIDs(r, ids)
+		if err != nil {
+			return models.ChatRequest{}, "", err
+		}
+		req.Attachments = mergeAttachments(req.Attachments, resolved...)
+	}
+
 	var transcription string
 	textPrompt := strings.TrimSpace(r.FormValue("text"))
+	var newAttachments []models.Attachment
 
 	if file, header, err := r.FormFile("audio"); err == nil {
 		defer file.Close()
@@ -179,6 +199,30 @@ func (s *Server) parseMultipartChat(r *http.Request) (models.ChatRequest, string
 		req.Messages = append(req.Messages, models.NewTextMessage("user", text))
 	}
 
+	if file, header, err := r.FormFile("document"); err == nil {
+		defer file.Close()
+		att, err := s.storeAttachment(r, header.Filename, header.Header.Get("Content-Type"), file)
+		if err != nil {
+			return models.ChatRequest{}, "", err
+		}
+		newAttachments = append(newAttachments, att)
+	}
+
+	if file, header, err := r.FormFile("file"); err == nil {
+		defer file.Close()
+		att, err := s.storeAttachment(r, header.Filename, header.Header.Get("Content-Type"), file)
+		if err != nil {
+			return models.ChatRequest{}, "", err
+		}
+		newAttachments = append(newAttachments, att)
+	}
+
+	req.Attachments = mergeAttachments(req.Attachments, newAttachments...)
+	if len(newAttachments) > 0 {
+		req.Messages = append(req.Messages, models.NewTextMessage("user", formatAttachmentUserMessage(textPrompt, newAttachments)))
+		textPrompt = ""
+	}
+
 	if file, _, err := r.FormFile("image"); err == nil {
 		defer file.Close()
 		dataURL, err := fileToDataURL(file)
@@ -186,12 +230,13 @@ func (s *Server) parseMultipartChat(r *http.Request) (models.ChatRequest, string
 			return models.ChatRequest{}, "", err
 		}
 		req.Messages = append(req.Messages, models.NewMultimodalMessage("user", textPrompt, dataURL))
-	} else if textPrompt != "" && transcription == "" {
+		textPrompt = ""
+	} else if textPrompt != "" && transcription == "" && len(newAttachments) == 0 {
 		req.Messages = append(req.Messages, models.NewTextMessage("user", textPrompt))
 	}
 
 	if len(req.Messages) == 0 {
-		return models.ChatRequest{}, "", errors.New("messages, audio, image, or text required")
+		return models.ChatRequest{}, "", errors.New("messages, audio, image, document, or text required")
 	}
 	return req, transcription, nil
 }

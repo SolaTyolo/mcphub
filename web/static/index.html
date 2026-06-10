@@ -30,6 +30,7 @@
         <div class="input-row">
           <label class="file-label">Voice<input id="audioInput" type="file" accept="audio/*" /></label>
           <label class="file-label">Image<input id="imageInput" type="file" accept="image/*" /></label>
+          <label class="file-label">Document<input id="documentInput" type="file" accept=".docx,.xlsx,.pptx,.pdf,.json,.csv,.tsv" /></label>
           <button type="submit">Send</button>
         </div>
       </form>
@@ -38,6 +39,7 @@
     <section class="meta">
       <div id="providerInfo"></div>
       <div id="transcriptionInfo"></div>
+      <div id="documentInfo"></div>
       <details>
         <summary>Tool Calls</summary>
         <pre id="toolCalls"></pre>

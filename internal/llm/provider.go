@@ -7,6 +7,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
+	"github.com/SolaTyolo/mcphub/internal/builtin"
 	"github.com/SolaTyolo/mcphub/internal/config"
 	"github.com/SolaTyolo/mcphub/internal/mcp"
 	"github.com/SolaTyolo/mcphub/internal/models"
@@ -111,6 +112,25 @@ func ToolsFromMCP(defs []mcp.ToolDef) []openai.Tool {
 	return tools
 }
 
+func ToolsFromBuiltin(defs []builtin.ToolDef) []openai.Tool {
+	var tools []openai.Tool
+	for _, d := range defs {
+		params := d.InputSchema
+		if params == nil {
+			params = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		tools = append(tools, openai.Tool{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        d.Name,
+				Description: d.Description,
+				Parameters:  params,
+			},
+		})
+	}
+	return tools
+}
+
 func ParseToolArguments(raw string) map[string]any {
 	if raw == "" {
 		return map[string]any{}
@@ -197,13 +217,16 @@ func partsToOAI(parts []models.ContentPart) ([]openai.ChatMessagePart, error) {
 	return out, nil
 }
 
-func BuildAgentMessages(ag *models.Agent, clientMsgs []models.ChatMessage) ([]openai.ChatCompletionMessage, error) {
+func BuildAgentMessages(ag *models.Agent, clientMsgs []models.ChatMessage, attachments []models.Attachment, parsingEnabled bool) ([]openai.ChatCompletionMessage, error) {
 	var systemParts []string
 	if ag.SystemPrompt != "" {
 		systemParts = append(systemParts, ag.SystemPrompt)
 	}
 	if ag.ResponseDescription != "" {
 		systemParts = append(systemParts, "Respond in this format:\n"+ag.ResponseDescription)
+	}
+	if hint := builtin.AttachmentHint(attachments, parsingEnabled); hint != "" {
+		systemParts = append(systemParts, hint)
 	}
 	if len(systemParts) > 0 {
 		clientMsgs = append([]models.ChatMessage{

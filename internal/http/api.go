@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/SolaTyolo/mcphub/internal/agent"
+	"github.com/SolaTyolo/mcphub/internal/attachment"
 	"github.com/SolaTyolo/mcphub/internal/config"
 	"github.com/SolaTyolo/mcphub/internal/logx"
 	"github.com/SolaTyolo/mcphub/internal/mcp"
@@ -15,16 +16,17 @@ import (
 )
 
 type Server struct {
-	cfg    config.Config
-	store  storage.Store
-	agent  *agent.Service
-	pool   *mcp.Pool
-	stt    *stt.Client
-	static http.Handler
+	cfg         config.Config
+	store       storage.Store
+	attachments attachment.Store
+	agent       *agent.Service
+	pool        *mcp.Pool
+	stt         *stt.Client
+	static      http.Handler
 }
 
-func NewServer(cfg config.Config, store storage.Store, agentSvc *agent.Service, pool *mcp.Pool, sttClient *stt.Client, static http.Handler) *Server {
-	return &Server{cfg: cfg, store: store, agent: agentSvc, pool: pool, stt: sttClient, static: static}
+func NewServer(cfg config.Config, store storage.Store, attachments attachment.Store, agentSvc *agent.Service, pool *mcp.Pool, sttClient *stt.Client, static http.Handler) *Server {
+	return &Server{cfg: cfg, store: store, attachments: attachments, agent: agentSvc, pool: pool, stt: sttClient, static: static}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -47,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/mcp-servers/{serverId}/test", auth(s.handleTestMCPServer))
 
 	mux.HandleFunc("POST /api/transcribe", auth(s.handleTranscribe))
+	mux.HandleFunc("POST /api/attachments", auth(s.handleUploadAttachment))
 
 	if s.static != nil {
 		mux.Handle("/", s.static)

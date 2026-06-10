@@ -6,6 +6,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
+	"github.com/SolaTyolo/mcphub/internal/builtin"
 	"github.com/SolaTyolo/mcphub/internal/config"
 	"github.com/SolaTyolo/mcphub/internal/llm"
 	"github.com/SolaTyolo/mcphub/internal/logx"
@@ -16,13 +17,14 @@ import (
 const tag = "agent"
 
 type Service struct {
-	cfg    config.Config
-	router *llm.Router
-	pool   *mcp.Pool
+	cfg     config.Config
+	router  *llm.Router
+	pool    *mcp.Pool
+	builtin *builtin.Runner
 }
 
-func NewService(cfg config.Config, router *llm.Router, pool *mcp.Pool) *Service {
-	return &Service{cfg: cfg, router: router, pool: pool}
+func NewService(cfg config.Config, router *llm.Router, pool *mcp.Pool, builtinRunner *builtin.Runner) *Service {
+	return &Service{cfg: cfg, router: router, pool: pool, builtin: builtinRunner}
 }
 
 func (s *Service) Chat(ctx context.Context, ag *models.Agent, servers []*models.MCPServer, req models.ChatRequest) (*models.ChatResponse, error) {
@@ -31,22 +33,23 @@ func (s *Service) Chat(ctx context.Context, ag *models.Agent, servers []*models.
 		return nil, err
 	}
 
-	toolDefs, err := s.pool.ListTools(ctx)
+	mcpToolDefs, err := s.pool.ListTools(ctx)
 	if err != nil {
 		logx.Error(tag, "list tools agent=%s: %v", ag.Name, err)
 		return nil, err
 	}
 
 	provider := s.router.Resolve(ag, req)
-	oaiTools := llm.ToolsFromMCP(toolDefs)
+	builtinTools := s.builtin.ToolDefs(req.Attachments)
+	oaiTools := append(llm.ToolsFromBuiltin(builtinTools), llm.ToolsFromMCP(mcpToolDefs)...)
 
-	messages, err := llm.BuildAgentMessages(ag, req.Messages)
+	messages, err := llm.BuildAgentMessages(ag, req.Messages, req.Attachments, s.cfg.MarkItDownEnabled())
 	if err != nil {
 		return nil, err
 	}
 
-	logx.Info(tag, "chat start agent=%s messages=%d mcp_servers=%d tools=%d endpoint=%s model=%s",
-		ag.Name, len(req.Messages), len(servers), len(toolDefs), provider.Endpoint(), provider.Model())
+	logx.Info(tag, "chat start agent=%s messages=%d attachments=%d mcp_servers=%d mcp_tools=%d builtin_tools=%d endpoint=%s model=%s",
+		ag.Name, len(req.Messages), len(req.Attachments), len(servers), len(mcpToolDefs), len(builtinTools), provider.Endpoint(), provider.Model())
 
 	var executed []models.ToolCall
 
@@ -81,9 +84,10 @@ func (s *Service) Chat(ctx context.Context, ag *models.Agent, servers []*models.
 					Role:    "assistant",
 					Content: content,
 				},
-				ToolCalls: executed,
-				Endpoint:  provider.Endpoint(),
-				Model:     provider.Model(),
+				ToolCalls:   executed,
+				Attachments: req.Attachments,
+				Endpoint:    provider.Endpoint(),
+				Model:       provider.Model(),
 			}, nil
 		}
 
@@ -92,16 +96,22 @@ func (s *Service) Chat(ctx context.Context, ag *models.Agent, servers []*models.
 			args := llm.ParseToolArguments(tc.Function.Arguments)
 			logx.Info(tag, "call tool agent=%s name=%s args=%s",
 				ag.Name, tc.Function.Name, logx.Truncate(tc.Function.Arguments, 200))
-			result, err := s.pool.CallTool(ctx, tc.Function.Name, args)
+			var result string
+			var callErr error
+			if builtin.IsBuiltin(tc.Function.Name) {
+				result, callErr = s.builtin.Call(ctx, tc.Function.Name, args, req.Attachments)
+			} else {
+				result, callErr = s.pool.CallTool(ctx, tc.Function.Name, args)
+			}
 			record := models.ToolCall{
 				ID:        tc.ID,
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
 				Result:    result,
 			}
-			if err != nil {
-				logx.Error(tag, "tool failed agent=%s name=%s: %v", ag.Name, tc.Function.Name, err)
-				record.Result = err.Error()
+			if callErr != nil {
+				logx.Error(tag, "tool failed agent=%s name=%s: %v", ag.Name, tc.Function.Name, callErr)
+				record.Result = callErr.Error()
 			} else {
 				logx.Info(tag, "tool ok agent=%s name=%s result=%s",
 					ag.Name, tc.Function.Name, logx.Truncate(result, 200))

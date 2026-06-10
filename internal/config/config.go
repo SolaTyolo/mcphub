@@ -8,9 +8,11 @@ import (
 )
 
 type Config struct {
-	ServerAddr        string
-	Store             StoreConfig
-	GatewayAPIKey     string
+	ServerAddr         string
+	Store              StoreConfig
+	AttachmentStore    AttachmentStoreConfig
+	AttachmentMaxBytes int64
+	GatewayAPIKey      string
 	LLMAPIKey         string
 	LLMBaseURL        string
 	LLMModel          string
@@ -18,6 +20,7 @@ type Config struct {
 	WhisperBaseURL    string
 	WhisperAPIKey     string
 	WhisperModel      string
+	MarkItDownMCPURL  string
 	MCPIdleTTL        time.Duration
 	AgentMaxRounds    int
 }
@@ -37,17 +40,21 @@ func Load() Config {
 	if legacy := os.Getenv("LLM_STORE"); legacy != "" {
 		store = applyLegacyStoreKind(store, legacy)
 	}
+	attachmentDSN := firstNonEmpty(os.Getenv("ATTACHMENT_STORE_DSN"), os.Getenv("ATTACHMENT_DSN"))
 	return Config{
-		ServerAddr:        getenv("LLM_SERVER_ADDR", ":8090"),
-		Store:             store,
+		ServerAddr:         getenv("LLM_SERVER_ADDR", ":8090"),
+		Store:              store,
+		AttachmentStore:    ParseAttachmentDSN(attachmentDSN),
+		AttachmentMaxBytes: int64Env("ATTACHMENT_MAX_BYTES", 32<<20),
 		GatewayAPIKey:  os.Getenv("GATEWAY_API_KEY"),
 		LLMAPIKey:      getenv("LLM_API_KEY", "ollama"),
 		LLMBaseURL:     getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
 		LLMModel:       getenv("LLM_MODEL", "qwen2.5:7b-instruct-q4_K_M"),
 		LLMVisionModel: getenv("LLM_VISION_MODEL", "llama3.2-vision"),
-		WhisperBaseURL:    os.Getenv("WHISPER_BASE_URL"),
+		WhisperBaseURL:    strings.TrimSpace(os.Getenv("WHISPER_BASE_URL")),
 		WhisperAPIKey:     os.Getenv("WHISPER_API_KEY"),
 		WhisperModel:      getenv("WHISPER_MODEL", "whisper-1"),
+		MarkItDownMCPURL:  strings.TrimSpace(os.Getenv("MARKITDOWN_MCP_URL")),
 		MCPIdleTTL:        durationEnv("MCP_IDLE_TTL", 5*time.Minute),
 		AgentMaxRounds:    intEnv("AGENT_MAX_ROUNDS", 10),
 	}
@@ -85,4 +92,21 @@ func intEnv(key string, def int) int {
 		}
 	}
 	return def
+}
+
+func int64Env(key string, def int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func (c Config) WhisperEnabled() bool {
+	return c.WhisperBaseURL != ""
+}
+
+func (c Config) MarkItDownEnabled() bool {
+	return c.MarkItDownMCPURL != ""
 }

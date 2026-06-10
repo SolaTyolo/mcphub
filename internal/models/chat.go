@@ -146,14 +146,24 @@ type ToolCall struct {
 }
 
 type ChatRequest struct {
-	Messages []ChatMessage `json:"messages"`
-	Model    string        `json:"model,omitempty"`
+	Messages      []ChatMessage `json:"messages"`
+	Model         string        `json:"model,omitempty"`
+	Attachments   []Attachment  `json:"attachments,omitempty"`
+	AttachmentIDs []string      `json:"attachmentIds,omitempty"`
+}
+
+type Attachment struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType,omitempty"`
+	Size        int64  `json:"size,omitempty"`
 }
 
 type ChatResponse struct {
-	Message       ChatMessage `json:"message"`
-	ToolCalls     []ToolCall  `json:"toolCalls,omitempty"`
-	Transcription string      `json:"transcription,omitempty"`
-	Endpoint      string      `json:"endpoint"`
-	Model         string      `json:"model"`
+	Message       ChatMessage  `json:"message"`
+	ToolCalls     []ToolCall   `json:"toolCalls,omitempty"`
+	Transcription string       `json:"transcription,omitempty"`
+	Attachments   []Attachment `json:"attachments,omitempty"`
+	Endpoint      string       `json:"endpoint"`
+	Model         string       `json:"model"`
 }

@@ -7,7 +7,9 @@ const userInput = document.getElementById("userInput");
 const agentSelect = document.getElementById("agentSelect");
 const audioInput = document.getElementById("audioInput");
 const imageInput = document.getElementById("imageInput");
+const documentInput = document.getElementById("documentInput");
 const reloadAgentsBtn = document.getElementById("reloadAgents");
+const documentInfoEl = document.getElementById("documentInfo");
 
 const history = [];
 
@@ -61,18 +63,19 @@ form.addEventListener("submit", async (e) => {
   const text = userInput.value.trim();
   const audioFile = audioInput.files[0];
   const imageFile = imageInput.files[0];
+  const documentFile = documentInput.files[0];
   const agentId = agentSelect.value;
 
   if (!agentId) {
     alert("Select an agent first");
     return;
   }
-  if (!text && !audioFile && !imageFile) {
-    alert("Enter text, voice, or image");
+  if (!text && !audioFile && !imageFile && !documentFile) {
+    alert("Enter text, voice, image, or document");
     return;
   }
 
-  const useMultipart = !!(audioFile || imageFile);
+  const useMultipart = !!(audioFile || imageFile || documentFile);
   if (text && !useMultipart) {
     history.push({ role: "user", content: text });
     appendMessage("user", text);
@@ -81,16 +84,19 @@ form.addEventListener("submit", async (e) => {
     if (text) parts.push(text);
     if (audioFile) parts.push(`[audio: ${audioFile.name}]`);
     if (imageFile) parts.push(`[image: ${imageFile.name}]`);
+    if (documentFile) parts.push(`[document: ${documentFile.name}]`);
     appendMessage("user", parts.join(" "));
   }
 
   userInput.value = "";
   audioInput.value = "";
   imageInput.value = "";
+  documentInput.value = "";
 
   const btn = form.querySelector('button[type="submit"]');
   btn.disabled = true;
   transcriptionInfoEl.textContent = "";
+  documentInfoEl.textContent = "";
 
   try {
     let res;
@@ -98,6 +104,7 @@ form.addEventListener("submit", async (e) => {
       const body = new FormData();
       if (audioFile) body.append("audio", audioFile);
       if (imageFile) body.append("image", imageFile);
+      if (documentFile) body.append("document", documentFile);
       if (text) body.append("text", text);
       body.append("messages", JSON.stringify(history));
       res = await fetch(`/api/agents/${agentId}/chat`, {
@@ -121,6 +128,14 @@ form.addEventListener("submit", async (e) => {
     if (data.transcription) {
       history.push({ role: "user", content: data.transcription });
       transcriptionInfoEl.textContent = `Transcription: ${data.transcription}`;
+    } else if (data.attachments?.length) {
+      const names = data.attachments.map((a) => `${a.filename} (${a.id})`).join(", ");
+      documentInfoEl.textContent = `Attachments stored: ${names} — agent will parse on demand via mcphub__parse_document`;
+      if (documentFile) {
+        history.push({ role: "user", content: text ? `${text}\n[document: ${documentFile.name}]` : `[document: ${documentFile.name}]` });
+      } else if (text) {
+        history.push({ role: "user", content: text });
+      }
     } else if (useMultipart && (text || imageFile)) {
       if (imageFile && text) {
         history.push({

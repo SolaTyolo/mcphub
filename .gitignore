@@ -2,4 +2,5 @@
 bin/
 data/*.db
 data/store.yml
+data/attachments/
 data/*.tmp

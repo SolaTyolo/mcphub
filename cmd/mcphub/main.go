@@ -13,11 +13,14 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/SolaTyolo/mcphub/internal/agent"
+	"github.com/SolaTyolo/mcphub/internal/attachment"
+	"github.com/SolaTyolo/mcphub/internal/builtin"
 	"github.com/SolaTyolo/mcphub/internal/config"
 	httpapi "github.com/SolaTyolo/mcphub/internal/http"
 	"github.com/SolaTyolo/mcphub/internal/llm"
 	"github.com/SolaTyolo/mcphub/internal/mcp"
 	"github.com/SolaTyolo/mcphub/internal/logx"
+	"github.com/SolaTyolo/mcphub/internal/markitdown"
 	"github.com/SolaTyolo/mcphub/internal/storage"
 	"github.com/SolaTyolo/mcphub/internal/stt"
 	"github.com/SolaTyolo/mcphub/web"
@@ -39,16 +42,24 @@ func main() {
 	}
 	logx.Info("mcphub", "store connected type=%s dsn=%s", cfg.Store.Kind, cfg.Store.RawDSN)
 
+	attachments, err := attachment.Open(ctx, cfg.AttachmentStore)
+	if err != nil {
+		log.Fatalf("attachment store: %v", err)
+	}
+	logx.Info("mcphub", "attachment store connected type=%s dsn=%s", cfg.AttachmentStore.Kind, cfg.AttachmentStore.RawDSN)
+
 	pool := mcp.NewPool(cfg.MCPIdleTTL)
 	router := llm.NewRouter(cfg)
-	agentSvc := agent.NewService(cfg, router, pool)
+	markdownClient := markitdown.NewClient(cfg)
+	builtinRunner := builtin.NewRunner(attachments, markdownClient)
+	agentSvc := agent.NewService(cfg, router, pool, builtinRunner)
 	sttClient := stt.NewClient(cfg)
 
 	staticRoot, err := fs.Sub(web.Static, "static")
 	if err != nil {
 		log.Fatalf("static fs: %v", err)
 	}
-	srv := httpapi.NewServer(cfg, store, agentSvc, pool, sttClient, http.FileServer(http.FS(staticRoot)))
+	srv := httpapi.NewServer(cfg, store, attachments, agentSvc, pool, sttClient, http.FileServer(http.FS(staticRoot)))
 
 	server := &http.Server{
 		Addr:              cfg.ServerAddr,
@@ -57,8 +68,11 @@ func main() {
 	}
 
 	go func() {
-		logx.Info("mcphub", "listening addr=%s llm=%s vision=%s whisper=%t auth=%t",
-			cfg.ServerAddr, cfg.LLMModel, cfg.LLMVisionModel, sttClient != nil && sttClient.Enabled(), cfg.GatewayAPIKey != "")
+		logx.Info("mcphub", "listening addr=%s llm=%s vision=%s whisper=%t markitdown=%t auth=%t",
+			cfg.ServerAddr, cfg.LLMModel, cfg.LLMVisionModel,
+			cfg.WhisperEnabled(),
+			cfg.MarkItDownEnabled(),
+			cfg.GatewayAPIKey != "")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server: %v", err)
 		}
